@@ -78,10 +78,8 @@ def main_worker(gpu, args):
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
-    model = resnet_models.__dict__[args.arch](normalize=True) 
-    # model = models.resnet50().cuda(gpu)
-    if (args.pretrained).is_file():
-        print('发现该模型！')  
+    model = resnet_models.__dict__[args.arch](normalize=True)
+    if args.pretrained.is_file():
         state_dict = torch.load(args.pretrained, map_location='cpu')
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
     print(missing_keys)
@@ -90,8 +88,6 @@ def main_worker(gpu, args):
         out_features = 10
     else:
         out_features = 100
-    # model.fc = nn.Linear(2048, 100)
-    # model.fc = nn.Linear(512, 10)
     model.fc = nn.Linear(model.fc.in_features, out_features)
     assert missing_keys == ['fc.weight', 'fc.bias'] and unexpected_keys == []
     model.fc.weight.data.normal_(mean=0.0, std=0.01)
@@ -105,7 +101,6 @@ def main_worker(gpu, args):
             classifier_parameters.append(param)
         else:
             model_parameters.append(param)
-    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
     model = torch.nn.DataParallel(model)
 
     criterion = nn.CrossEntropyLoss().cuda(gpu)
@@ -143,22 +138,10 @@ def main_worker(gpu, args):
             transforms.ToTensor(),
             normalize,
     ])
-    # train_dataset = datasets.CIFAR100(args.data, train=True, transform=train_transform,
-    #                                  download=True)
-    # val_dataset = datasets.CIFAR100(args.data, train=False, transform=val_transform,
-    #                                download=False)
 
     train_dataset = get_dataset(dataset=args.data, data_dir=args.root, transform=train_transform, train=True, download=True)
-    val_dataset = get_dataset(dataset=args.data, data_dir=args.root, transform=val_transform, train=False, download=True)                               
-    # if args.train_percent in {1, 10}:
-    #     train_dataset.samples = []
-    #     for fname in args.train_files:
-    #         fname = fname.decode().strip()
-    #         cls = fname.split('_')[0]
-    #         train_dataset.samples.append(
-    #             (traindir / cls / fname, train_dataset.class_to_idx[cls]))
+    val_dataset = get_dataset(dataset=args.data, data_dir=args.root, transform=val_transform, train=False, download=True)
 
-    # train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     sampler = torch.utils.data.RandomSampler(train_dataset)
     kwargs = dict(batch_size=args.batch_size // args.world_size, num_workers=args.workers, pin_memory=True)
     train_loader = torch.utils.data.DataLoader(train_dataset, sampler=sampler, **kwargs)
@@ -176,7 +159,6 @@ def main_worker(gpu, args):
         # train_sampler.set_epoch(epoch)
         for step, (images, target) in enumerate(train_loader, start=epoch * len(train_loader)):
             output = model(images.cuda(gpu, non_blocking=True))
-            # print(f'step: {output.shape}')
             loss = criterion(output, target.cuda(gpu, non_blocking=True))
             optimizer.zero_grad()
             loss.backward()
@@ -209,14 +191,6 @@ def main_worker(gpu, args):
             stats = dict(epoch=epoch, acc1=top1.avg, acc5=top5.avg, best_acc1=best_acc.top1, best_acc5=best_acc.top5)
             print(json.dumps(stats))
             print(json.dumps(stats), file=stats_file)
-
-        # # sanity check
-        # if args.weights == 'freeze':
-        #     reference_state_dict = torch.load(args.pretrained, map_location='cpu')
-        #     model_state_dict = model.module.state_dict()
-        #     for k in reference_state_dict:
-        #         # print(f'k:{k}')
-        #         assert torch.equal(model_state_dict[k].cpu(), reference_state_dict[k]), k
 
         scheduler.step()
         if args.rank == 0:

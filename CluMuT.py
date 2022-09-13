@@ -26,6 +26,7 @@ import torchvision.transforms as transforms
 import model.cifar_resnet as resnet_models
 from database import get_dataset
 
+
 parser = argparse.ArgumentParser(description='Clustering-based Mutual Targeting Training')
 parser.add_argument('--root', metavar='PATH', type=str,
                         default='',
@@ -219,7 +220,7 @@ def mutual_loss(target, h):  # negative cosine similarity
     return loss
 
 
-class CluMuLModel(nn.Module):
+class CluMuTModel(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
@@ -240,7 +241,7 @@ class CluMuLModel(nn.Module):
         
         # prototypes
         self.prototypes = nn.Linear(sizes[-2], sizes[-1], bias=False)
-        # normalization layer for the representations za and zb
+        # standardization of Za and Zb over batch to give mean=0 and std=1.
         self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
 
     def forward(self, x_a, x_b, step):

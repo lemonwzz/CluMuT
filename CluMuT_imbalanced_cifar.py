@@ -27,14 +27,13 @@ import model.cifar_resnet as resnet_models
 from augmentations import get_aug
 from augmentations.imbalance_cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
 
-
 parser = argparse.ArgumentParser(description='Clustering-based Mutual Targeting Training')
 parser.add_argument('--root', metavar='PATH', type=str,
-                        default='',
-                        help='path to dataset')
+                    default='',
+                    help='path to dataset')
 parser.add_argument('--data', type=str, metavar='DIR',
                     help='path to dataset')
-parser.add_argument("--arch", default="resnet18", type=str, help="convnet architecture")                    
+parser.add_argument("--arch", default="resnet18", type=str, help="convnet architecture")
 parser.add_argument('--workers', default=2, type=int, metavar='N',
                     help='number of data loader workers')
 parser.add_argument('--epochs', default=300, type=int, metavar='N',
@@ -57,7 +56,8 @@ parser.add_argument('--checkpoint-dir', default='./checkpoint/', type=Path,
                     metavar='DIR', help='path to checkpoint directory')
 parser.add_argument("--seed", type=int, default=31, help="seed")
 parser.add_argument("--checkpoint_freq", type=int, default=50,
-                        help="Save the model periodically")
+                    help="Save the model periodically")
+
 
 def main():
     args = parser.parse_args()
@@ -81,7 +81,7 @@ def fix_random_seeds(seed=31):
 
 
 def main_worker(gpu, args):
-    args.rank += gpu  
+    args.rank += gpu
 
     if args.rank == 0:
         args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -115,17 +115,16 @@ def main_worker(gpu, args):
         optimizer.load_state_dict(ckpt['optimizer'])
     else:
         start_epoch = 0
-        
-        
+
+    # simulate imbalance data
     transform_train = get_aug(train=True)
-    # build imbalance_cifar data
     imb_type = 'exp'
     if args.data == 'cifar10':
         dataset = IMBALANCECIFAR10(root='/content/data', imb_type=imb_type, imb_factor=0.1,
-                                     rand_number=0, train=True, download=True, transform=transform_train)
+                                   rand_number=0, train=True, download=True, transform=transform_train)
     if args.data == 'cifar100':
         dataset = IMBALANCECIFAR100(root='/content/data', imb_type=imb_type, imb_factor=0.1,
-                                     rand_number=0, train=True, download=True, transform=transform_train)
+                                    rand_number=0, train=True, download=True, transform=transform_train)
 
     sampler = torch.utils.data.RandomSampler(dataset)
     assert args.batch_size % args.world_size == 0
@@ -149,13 +148,13 @@ def main_worker(gpu, args):
     for epoch in range(start_epoch, args.epochs):
         # sampler.set_epoch(epoch)
         for step, ((xa, xb), _) in enumerate(loader, start=epoch * len(loader)):
-            
+
             # normalize the prototypes
             with torch.no_grad():
                 w = model.module.prototypes.weight.data.clone()
                 w = nn.functional.normalize(w, dim=1, p=2)
                 model.module.prototypes.weight.copy_(w)
-            
+
             xa = xa.cuda(gpu, non_blocking=True)
             xb = xb.cuda(gpu, non_blocking=True)
             adjust_learning_rate(args, optimizer, loader, step)
@@ -237,28 +236,27 @@ class CluMuTModel(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        
-         # build model
+
+        # build model
         self.backbone = resnet_models.__dict__[args.arch](normalize=True)
         self.out = self.backbone.fc.in_features
         self.backbone.fc = nn.Identity()
-        
+
         # projector        
-        sizes = [self.out] + list(map(int, args.projector.split('-')))        
+        sizes = [self.out] + list(map(int, args.projector.split('-')))
         layers = []
         for i in range(len(sizes) - 2):
             layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
             layers.append(nn.BatchNorm1d(sizes[i + 1]))
             layers.append(nn.ReLU(inplace=True))
         self.projector = nn.Sequential(*layers)
-        
+
         # prototypes
         self.prototypes = nn.Linear(sizes[-2], sizes[-1], bias=False)
         # normalization layer for the representations z1 and z2
         self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
 
     def forward(self, x_a, x_b, step):
-
         z_a = self.projector(self.backbone(x_a))
         z_b = self.projector(self.backbone(x_b))
 
@@ -267,20 +265,20 @@ class CluMuTModel(nn.Module):
 
         # calculate h
         h_a, h_b = self.prototypes(z_a), self.prototypes(z_b)
-        
+
         # cross-correlation matrix
-        c = h_a.T @ h_b        
+        c = h_a.T @ h_b
         # sum the cross-correlation matrix between all gpus
         c.div_(self.args.batch_size)
-        
+
         # orthogonality regularization
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
         loss_o = on_diag + self.args.lambd * off_diag
-        
+
         # mutual targeting loss
         loss_mt = mutual_loss(z_a, z_b) / 2 + mutual_loss(z_b, z_a) / 2
-        
+
         # total loss
         loss = loss_mt + loss_o
         return loss
@@ -293,7 +291,6 @@ class LARS(optim.Optimizer):
                         eta=eta, weight_decay_filter=weight_decay_filter,
                         lars_adaptation_filter=lars_adaptation_filter)
         super().__init__(params, defaults)
-
 
     def exclude_bias_and_norm(self, p):
         return p.ndim == 1
